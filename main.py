@@ -13,15 +13,20 @@ import seaborn as sns
 import joblib
 
 # ===========================
-# Load dataset
+# 1. CARREGAR E LIMPAR DADOS
 # ===========================
 df = pd.read_excel("ECF_2.xlsx")
 
+# Remoção de Data Leakage (Fuga de Informação)
+# MOTIVO: Removemos colunas como 'monthly_premium' ou 'total_claims_paid' porque
+# elas são *consequências* do risco e não *causas*. Se as mantivesses, o modelo
+# iria "adivinhar" o risco baseado no quanto a pessoa pagou, o que é inútil para
+# novos clientes que ainda não pagaram nada.
 target = "risk_score"
 X = df.drop(columns=[target, "person_id", "is_high_risk", "monthly_premium", "avg_claim_amount", "annual_premium"], errors='ignore')
 y = df[target].astype(float)
 
-# Identify column types
+# Identificar tipos de colunas automaticamente
 cat_cols = X.select_dtypes(include=["object"]).columns
 num_cols = X.select_dtypes(exclude=["object"]).columns
 
@@ -29,30 +34,45 @@ print("Categorical columns:", list(cat_cols))
 print("Numeric columns:", list(num_cols))
 
 # ===========================
-# Preprocessing (Sklearn)
+# 2. DIVISÃO DOS DADOS (SPLIT)
 # ===========================
-preprocess = ColumnTransformer(
-    transformers=[
-        ("categorical", OneHotEncoder(handle_unknown="ignore"), cat_cols),
-        ("numeric", StandardScaler(), num_cols)
-    ]
-)
-
-# Split BEFORE preprocessing to keep original data for analysis
+# [MOTIVO IMPORTANTE] Fazemos o Split ANTES do Pré-processamento.
+# Porquê? Se calculares a média (StandardScaler) com todos os dados antes de dividir,
+# a média do conjunto de TESTE vai influenciar o TREINO. Isso chama-se "Data Leakage".
+# O correto é o modelo não saber absolutamente NADA sobre os dados de teste.
 X_train_orig, X_test_orig, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
-# Fit + transform data
-preprocess.fit(X_train_orig)
+
+# ===========================
+# 3. PRÉ-PROCESSAMENTO (PREPROCESSING)
+# ===========================
+# Definimos as regras de transformação
+preprocess = ColumnTransformer(
+    transformers=[
+        # OneHotEncoder: Transforma texto ("Male", "Female") em números (0, 1).
+        # handle_unknown="ignore": Se no futuro aparecer uma categoria nova que não existia
+        # no treino, o código não rebenta, apenas ignora (essencial para produção).
+        ("categorical", OneHotEncoder(handle_unknown="ignore"), cat_cols),
+        
+        # StandardScaler: Coloca todos os números na mesma escala (média 0, desvio 1).
+        # MOTIVO: Redes Neuronais funcionam muito mal se misturares números pequenos (Idade: 30)
+        # com números grandes (Salário: 50000). A escala ajuda a rede a aprender mais rápido.
+        ("numeric", StandardScaler(), num_cols)
+    ]
+)
+
+# [CRÍTICO] .fit apenas no TREINO
+preprocess.fit(X_train_orig) 
+
+# Aplicar a transformação (.transform) nos dois
 X_train = preprocess.transform(X_train_orig)
 X_test = preprocess.transform(X_test_orig)
 
-# Convert to float32 (TensorFlow requirement)
-X_train = np.array(X_train, dtype="float32")
-X_test = np.array(X_test, dtype="float32")
-
-# Convert to float32 (TensorFlow requirement)
+# [MOTIVO TÉCNICO] Converter para float32
+# O Python usa float64 por defeito (muita precisão), mas as placas gráficas (GPU) e o TensorFlow
+# preferem float32. Ocupa metade da memória e é mais rápido, sem perder qualidade relevante.
 X_train = np.array(X_train, dtype="float32")
 X_test = np.array(X_test, dtype="float32")
 
@@ -61,28 +81,42 @@ print("Test shape:", X_test.shape)
 
 
 # ===========================
-# Neural Network Architecture
+# 4. ARQUITETURA DA REDE NEURONAL
 # ===========================
+
+# Arquitetura em "Funil": Começa larga (256) e vai estreitando (128 -> 64 -> 1).
+# Isso força a rede a resumir a informação e extrair apenas os padrões importantes.
 model = Sequential([
+    # Camada de Entrada + Primeira Oculta
     Dense(256, activation='relu', input_shape=(X_train.shape[1],)),
+    # [MOTIVO] Dropout: Desliga aleatoriamente 30% dos neurónios a cada passagem.
+    # Serve para evitar "Overfitting" (o modelo decorar os dados). Obriga a rede a ser robusta.
     Dropout(0.3),
     Dense(128, activation='relu'),
     Dropout(0.2),
     Dense(64, activation='relu'),
-    Dense(1, activation='linear')   # regression output
+    # Camada de Saída: 1 neurónio apenas.
+    # Activation='linear': Como é uma REGRESSÃO (prever um valor contínuo), não queremos
+    # limitar a saída (como sigmoid que limita entre 0 e 1). Queremos o valor real.
+    Dense(1, activation='linear')
 ])
 
 model.compile(
-    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-    loss='mse',
-    metrics=['mae']
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), # Adam é o "standard" da indústria
+    loss='mse',    # Mean Squared Error: Tenta minimizar o erro ao quadrado (penaliza muito os erros grandes)
+    metrics=['mae'] # Mean Absolute Error: Mais fácil para humanos lerem
 )
 
 model.summary()
 
+
 # ===========================
-# Training with early stopping
+# 5. TREINO
 # ===========================
+
+# EarlyStopping: O "fiscal" do treino.
+# Se o 'val_loss' (erro na validação) não melhorar durante 20 épocas (patience), o treino para.
+# restore_best_weights=True: Garante que no fim, ficamos com a melhor versão do modelo, e não a última.
 early_stop = EarlyStopping(
     monitor="val_loss",
     patience=20,
@@ -91,15 +125,15 @@ early_stop = EarlyStopping(
 
 history = model.fit(
     X_train, y_train,
-    validation_split=0.2,
+    validation_split=0.2, # Usa 20% do treino para ir validando enquanto aprende
     epochs=200,
-    batch_size=32,
+    batch_size=32, # Atualiza os pesos a cada 32 linhas de dados
     callbacks=[early_stop],
     verbose=1
 )
 
 # ===========================
-# Evaluate model
+# 6. AVALIAÇÃO DO MODELO
 # ===========================
 preds = model.predict(X_test).flatten()
 
@@ -122,14 +156,12 @@ cv_rmse = rmse / y_mean
 # R2 (Qualidade do ajuste)
 r2 = r2_score(y_test, preds)
 
-# MAPE (Mean Absolute Percentage Error)
-# Nao se pode usar por causa de valores zero
-#mape = np.mean(np.abs((y_test - preds) / (y_test + 1e-10))) * 100
-
-# WMAPE: Erro Absoluto Total / Soma Total dos Valores Reais
+# [MOTIVO] WMAPE vs MAPE
+# O MAPE tradicional explode se tiveres zeros nos dados (Divisão por zero).
+# O WMAPE (Weighted MAPE) resolve isso somando todos os erros e dividindo pela soma total dos valores.
+# É a forma mais segura de calcular o "Erro Percentual" em dados financeiros ou de saúde.
 sum_abs_error = np.sum(np.abs(y_test - preds))
 sum_actual = np.sum(y_test)
-
 wmape = (sum_abs_error / sum_actual) * 100
 
 print(f"{'Métrica':<25} | {'Valor':<10} | {'Interpretação'}")
@@ -144,15 +176,17 @@ print(f"{'NRMSE (% do Range)':<25} | {nrmse_range*100:.2f}%     | Erro relativo 
 print(f"{'WMAPE (Erro Total)':<25} | {wmape:.2f}%     | Erro relativo à soma total")
 print("-" * 65)
 
-# --- ANÁLISE DE RESÍDUOS ---
+# --- GRÁFICOS DE RESÍDUOS ---
+# Importante para ver se o modelo tem "vícios".
+# Se o histograma não estiver centrado no zero, o modelo está "biased" (enviesado).
 residuals = y_test - preds
 
 plt.figure(figsize=(14, 5))
-    
+
 # Plot 1: Real vs Previsto
 plt.subplot(1, 2, 1)
 plt.scatter(y_test, preds, alpha=0.5, color='royalblue')
-plt.plot([y_min, y_max], [y_min, y_max], 'r--', lw=2) # Linha perfeita
+plt.plot([y_min, y_max], [y_min, y_max], 'r--', lw=2)
 plt.xlabel("Valor Real (Risk Score)")
 plt.ylabel("Valor Previsto")
 plt.title("Real vs Previsto (Ideal = Linha Vermelha)")
@@ -169,12 +203,16 @@ plt.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()
 
+# --- ANÁLISE POR GRUPO (FAIRNESS) ---
 print("\n=======================================================")
 print(" 2. PERFORMANCE POR GRUPO (CATEGORICAL ANALYSIS)")
 print("=======================================================")
 print("Isto mostra se o modelo é tendencioso (Bias Analysis)\n")
+# [MOTIVO] Esta parte é crucial na saúde.
+# Verifica se o modelo funciona tão bem para Homens como para Mulheres, 
+# ou se falha mais em zonas Rurais. Ajuda a detetar preconceitos no algoritmo.
 
-# Juntar previsões ao dataframe original para análise
+# Nota: Usamos X_test_orig porque X_test já está transformado em números (ninguém entende).
 analysis_df = X_test_orig.copy()
 analysis_df['Real'] = y_test.values
 analysis_df['Predicted'] = preds
@@ -185,10 +223,9 @@ for col in cat_cols:
         print(f"--- Análise por: {col.upper()} ---")
         # Agrupar e calcular métricas
         group_metrics = analysis_df.groupby(col).agg(
-            Count=('Real', 'count'),
-            MAE=('Abs_Error', 'mean'),
-            Mean_Real=('Real', 'mean'),
-            Mean_Pred=('Predicted', 'mean')
+            Count=('Real', 'count'),          # Quantos exemplos temos?
+            MAE=('Abs_Error', 'mean'),        # Qual o erro médio neste grupo?
+            Mean_Real=('Real', 'mean'),       # Qual o risco médio real deste grupo?
         ).sort_values(by='MAE', ascending=False)
         
         print(group_metrics)
@@ -197,8 +234,11 @@ for col in cat_cols:
 
 
 # ==========================================================
-# TRAINING CURVES
+# CURVAS DE TREINO
 # ==========================================================
+# Serve para ver se houve Overfitting.
+# Se a linha "Validation Loss" começar a subir enquanto a "Training Loss" desce,
+# o modelo começou a decorar em vez de aprender.
 plt.figure(figsize=(10,5))
 plt.plot(history.history["loss"], label="Training Loss")
 plt.plot(history.history["val_loss"], label="Validation Loss")
@@ -297,9 +337,15 @@ print(results_df.head(20))
 
 
 # ==========================================================
-# SAVE MODEL
+# GUARDAR TUDO
 # ==========================================================
+
+# Guardar o modelo treinado
 model.save("risk_score_model.keras")
+
+# [MUITO IMPORTANTE] Guardar o preprocessador
+# Sem este ficheiro 'preprocess.pkl', o modelo é inútil no futuro, 
+# porque não saberás como transformar os dados novos da mesma forma que o treino.
 joblib.dump(preprocess, "preprocess.pkl")
 
 #original_df.to_csv("feature_importance_original.csv", index=False)
