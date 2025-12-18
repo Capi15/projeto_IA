@@ -1,0 +1,1 @@
+["risk_score", "person_id", "is_high_risk", "monthly_premium", "avg_claim_amount", "mental_health"]
