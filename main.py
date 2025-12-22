@@ -23,7 +23,22 @@ df = pd.read_excel("ECF_2.xlsx")
 # iria "adivinhar" o risco baseado no quanto a pessoa pagou, o que é inútil para
 # novos clientes que ainda não pagaram nada.
 target = "risk_score"
-X = df.drop(columns=[target, "person_id", "is_high_risk", "monthly_premium", "avg_claim_amount", "annual_premium"], errors='ignore')
+
+# Lista de colunas a remover
+cols_to_drop = [
+    target, 
+    "person_id", 
+    # --- DATA LEAKAGE (SPOILERS) ---
+    "is_high_risk",              # Resposta direta do score
+    "monthly_premium",           # Calculado com base no risco
+    "annual_premium",            # Calculado com base no risco
+    "avg_claim_amount",          # Calculado com base no risco
+    "total_claims_paid"          # (Opcional) Remove se o objetivo for prever para NOVOS clientes
+]
+
+# Definir X e y
+# errors='ignore' garante que o código não falha se a coluna já não existir
+X = df.drop(columns=cols_to_drop, errors='ignore')
 y = df[target].astype(float)
 
 # Identificar tipos de colunas automaticamente
@@ -43,7 +58,6 @@ print("Numeric columns:", list(num_cols))
 X_train_orig, X_test_orig, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
-
 
 # ===========================
 # 3. PRÉ-PROCESSAMENTO (PREPROCESSING)
