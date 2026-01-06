@@ -19,7 +19,7 @@ print("A carregar modelo e dados...")
 # Carregar o Excel
 df = pd.read_excel(DATA_FILE)
 
-# Selecionar apenas as primeiras 10 linhas
+# Selecionar apenas as primeiras 20 linhas
 df_subset = df.head(20).copy()
 
 # Carregar o Modelo treinado e o Pipeline de pré-processamento
