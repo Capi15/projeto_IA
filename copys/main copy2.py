@@ -29,14 +29,14 @@ cols_to_drop = [
     "risk_score", 
     "person_id", 
     # --- DATA LEAKAGE (SPOILERS) ---
-    "risk_score",                # Calculado COM BASE no custo esperado
-    "is_high_risk",              # Derivado do risco/custo
-    "monthly_premium",           # Calculado com base no custo esperado
-    "annual_premium",            # Calculado com base no custo esperado
-    "avg_claim_amount",          # Derivado dos custos já incorridos
-    "claims_count",              # Fortemente correlacionado com custo
-    "total_claims_paid",         # É literalmente o custo já materializado
-    "copay"                      # Calculado com base no risco/custo
+    "is_high_risk",              # Resposta direta do score
+    "monthly_premium",           # Calculado com base no risco
+    #"annual_premium",            # Calculado com base no risco
+    "avg_claim_amount",          # Calculado com base no risco
+    "claims_count",              # Calculado com base no risco
+    "annual_medical_cost",       # Calculado com base no risco
+    #"copay",                     # Calculado com base no risco
+    "total_claims_paid"          # (Opcional) Remove se o objetivo for prever para NOVOS clientes
 ]
 
 # Definir X e y
@@ -183,9 +183,9 @@ wmape = (sum_abs_error / sum_actual) * 100
 
 print(f"{'Métrica':<25} | {'Valor':<10} | {'Interpretação'}")
 print("-" * 65)
-print(f"{'MAE (Erro Médio Abs)':<25} | ${mae:.2f}     | Erras em média ${mae:.2f} no custo anual")
-print(f"{'RMSE (Erro Quadrático)':<25} | ${rmse:.2f}     | Penaliza erros grandes (ex: casos muito caros)")
-print(f"{'MedAE (Erro Mediano)':<25} | ${medae:.2f}     | Erro típico (ignora outliers extremos)")
+print(f"{'MAE (Erro Médio Abs)':<25} | {mae:.4f}     | Erras em média {mae:.2f} pontos no score")
+print(f"{'RMSE (Erro Quadrático)':<25} | {rmse:.4f}     | Penaliza erros grandes (ex: casos graves)")
+print(f"{'MedAE (Erro Mediano)':<25} | {medae:.4f}     | Erro típico (ignora outliers extremos)")
 print(f"{'CV-RMSE (% da Média)':<25} | {cv_rmse*100:.2f}%     | Erro relativo à média")
 print(f"{'R² Score':<25} | {r2:.4f}     | O modelo explica {r2*100:.1f}% da variância")
 print("-" * 65)
@@ -204,8 +204,8 @@ plt.figure(figsize=(14, 5))
 plt.subplot(1, 2, 1)
 plt.scatter(y_test, preds, alpha=0.5, color='royalblue')
 plt.plot([y_min, y_max], [y_min, y_max], 'r--', lw=2)
-plt.xlabel("Valor Real (Annual Medical Cost $)")
-plt.ylabel("Valor Previsto ($)")
+plt.xlabel("Valor Real (Risk Score)")
+plt.ylabel("Valor Previsto")
 plt.title("Real vs Previsto (Ideal = Linha Vermelha)")
 plt.grid(True, alpha=0.3)
 
@@ -358,12 +358,12 @@ print(results_df.head(20))
 # ==========================================================
 
 # Guardar o modelo treinado
-model.save("cost_prediction_model.keras")
+model.save("risk_score_model.keras")
 
 # [MUITO IMPORTANTE] Guardar o preprocessador
-# Sem este ficheiro 'preprocess_cost.pkl', o modelo é inútil no futuro, 
+# Sem este ficheiro 'preprocess.pkl', o modelo é inútil no futuro, 
 # porque não saberás como transformar os dados novos da mesma forma que o treino.
-joblib.dump(preprocess, "preprocess_cost.pkl")
+joblib.dump(preprocess, "preprocess.pkl")
 
 #original_df.to_csv("feature_importance_original.csv", index=False)
 #encoded_df.to_csv("feature_importance_encoded.csv", index=False)
