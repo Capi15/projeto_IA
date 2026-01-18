@@ -143,7 +143,7 @@ early_stop = EarlyStopping(
 history = model.fit(
     X_train, y_train,
     validation_split=0.2, # Usa 20% do treino para ir validando enquanto aprende
-    epochs=200,
+    epochs=999,
     batch_size=32, # Atualiza os pesos a cada 32 linhas de dados
     callbacks=[early_stop],
     verbose=1

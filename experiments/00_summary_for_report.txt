@@ -1,0 +1,33 @@
+
+================================================================================
+ RESUMO PARA O RELATÓRIO
+================================================================================
+
+OBJETIVO:
+Prever o custo anual médico (annual_medical_cost) de pacientes usando
+diferentes abordagens de Machine Learning.
+
+DATA LEAKAGE:
+Foram removidas variáveis que constituem data leakage, como annual_premium,
+total_claims_paid, risk_score, etc., pois estas não estariam disponíveis
+no momento da previsão para novos pacientes.
+
+MODELOS TESTADOS:
+
+1. Random Forest: R² = 0.1420, MAE = $1,896.76
+2. Random Forest + Deductible: R² = 0.1333, MAE = $1,907.46
+3. Deep Learning: R² = 0.0992, MAE = $1,766.00
+4. Gradient Boosting: R² = 0.0957, MAE = $1,921.40
+
+MELHOR MODELO: Random Forest
+- R² Score: 0.1420 (14.2% da variância explicada)
+- MAE: $1,896.76 (erro médio absoluto)
+- WMAPE: 62.42% (erro percentual)
+
+CONCLUSÃO:
+Os valores de R² relativamente baixos (< 0.3) são ESPERADOS para este problema,
+pois a maior parte das variáveis com alta correlação com o custo foram removidas
+por serem data leakage. Um R² superior a 0.9 indicaria que o modelo está a usar
+informação que não estaria disponível em produção.
+
+================================================================================
